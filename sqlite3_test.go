@@ -15,6 +15,7 @@ import (
 	"errors"
 	"fmt"
 	"io/ioutil"
+	"log"
 	"math/rand"
 	"net/url"
 	"os"
@@ -972,6 +973,135 @@ func TestWAL(t *testing.T) {
 	}
 }
 
+func TestWalHook(t *testing.T) {
+	tempFilename := TempFilename(t)
+	defer os.Remove(tempFilename)
+
+	sql.Register("sqlite3_WAL_HOOK", &SQLiteDriver{
+		ConnectHook: func(conn *SQLiteConn) error {
+			if err := conn.SetFileControlInt("", SQLITE_FCNTL_PERSIST_WAL, 1); err != nil {
+				return fmt.Errorf("Unexpected error from SetFileControlInt(): %w", err)
+			}
+			conn.RegisterWalHook(func(s string, i int) int {
+				walFile := fmt.Sprintf("%s-wal", tempFilename)
+				_, err := os.Stat(walFile)
+				if err != nil {
+					t.Fatal("Failed to get wal file:", err)
+				}
+				//log.Printf("#1wall hook :%s,index:%d,size:%d,path:%s", s, i, info.Size(), info.Name())
+				conn.WalCheckpointV2("main", SQLITE_CHECKPOINT_FULL, 0, 0)
+				//log.Printf("#2wall hook :%s,index:%d,size:%d,path:%s", s, i, info.Size(), info.Name())
+				return SQLITE_OK
+			})
+			return nil
+		},
+	})
+
+	db, err := sql.Open("sqlite3_WAL_HOOK", tempFilename)
+	if err != nil {
+		t.Fatal("Failed to open database:", err)
+	}
+	defer db.Close()
+
+	// Set to WAL mode & write a page.
+	if _, err := db.Exec(`PRAGMA journal_mode = wal`); err != nil {
+		t.Fatal("Failed to set journal mode:", err)
+	} else if _, err := db.Exec(`CREATE TABLE t (x)`); err != nil {
+		t.Fatal("Failed to create table:", err)
+	} else if _, err := db.Exec(`CREATE TABLE t2 (x)`); err != nil {
+		t.Fatal("Failed to create table:", err)
+	} else if _, err := db.Exec(`CREATE TABLE t3 (x)`); err != nil {
+		t.Fatal("Failed to create table:", err)
+	} else if _, err := db.Exec(`CREATE TABLE t4 (x)`); err != nil {
+		t.Fatal("Failed to create table:", err)
+	}
+	if err := db.Close(); err != nil {
+		t.Fatal("Failed to close database", err)
+	}
+
+	// Ensure WAL file persists after close.
+	if _, err := os.Stat(tempFilename + "-wal"); err != nil {
+		t.Fatal("Expected WAL file to be persisted after close", err)
+	}
+}
+
+func TestWalCopy(t *testing.T) {
+	tempFilename := TempFilename(t)
+	tempCopyFilename := TempFilename(t)
+	defer os.Remove(tempFilename)
+	//defer os.Remove(tempCopyFilename)
+
+	var copyConn *SQLiteConn
+	sql.Register("sqlite3_WAL_COPY", &SQLiteDriver{
+		ConnectHook: func(conn *SQLiteConn) error {
+			if err := conn.SetFileControlInt("", SQLITE_FCNTL_PERSIST_WAL, 1); err != nil {
+				return fmt.Errorf("Unexpected error from SetFileControlInt(): %w", err)
+			}
+			copyConn = conn
+			return nil
+		},
+	})
+	dbCopy, err := sql.Open("sqlite3_WAL_COPY", tempCopyFilename)
+	if err != nil {
+		t.Fatal("Failed to open database:", err)
+	}
+	defer dbCopy.Close()
+	sql.Register("sqlite3_WAL_HOOK", &SQLiteDriver{
+		ConnectHook: func(conn *SQLiteConn) error {
+			if err := conn.SetFileControlInt("", SQLITE_FCNTL_PERSIST_WAL, 1); err != nil {
+				return fmt.Errorf("Unexpected error from SetFileControlInt(): %w", err)
+			}
+			conn.RegisterWalHook(func(s string, i int) int {
+				sourceWalFile := fmt.Sprintf("%s-wal", tempFilename)
+				targetWalFile := fmt.Sprintf("%s-wal", tempCopyFilename)
+				input, err := ioutil.ReadFile(sourceWalFile)
+				if err != nil {
+					t.Fatal("Failed to get wal file:", err)
+				}
+
+				err = ioutil.WriteFile(targetWalFile, input, 0644)
+				if err != nil {
+					t.Fatal("Error creating", targetWalFile)
+				}
+				conn.WalCheckpointV2("main", SQLITE_CHECKPOINT_FULL, 0, 0)
+				copyConn.WalCheckpointV2("main", SQLITE_CHECKPOINT_FULL, 0, 0)
+				log.Printf("tempCopyFilename:%s", tempCopyFilename)
+				return SQLITE_OK
+			})
+			return nil
+		},
+	})
+
+	db, err := sql.Open("sqlite3_WAL_HOOK", tempFilename)
+	if err != nil {
+		t.Fatal("Failed to open database:", err)
+	}
+	defer db.Close()
+	if _, err := dbCopy.Exec(`PRAGMA journal_mode = wal`); err != nil {
+		t.Fatal("Failed to set db copy journal mode:", err)
+	}
+	// Set to WAL mode & write a page.
+	if _, err := db.Exec(`PRAGMA journal_mode = wal`); err != nil {
+		t.Fatal("Failed to set journal mode:", err)
+	} else if _, err := db.Exec(`CREATE TABLE t (x)`); err != nil {
+		t.Fatal("Failed to create table:", err)
+	} else if _, err := db.Exec(`CREATE TABLE t2 (x)`); err != nil {
+		t.Fatal("Failed to create table:", err)
+	} else if _, err := db.Exec(`CREATE TABLE t3 (x)`); err != nil {
+		t.Fatal("Failed to create table:", err)
+	} else if _, err := db.Exec(`CREATE TABLE t4 (x)`); err != nil {
+		t.Fatal("Failed to create table:", err)
+	}
+	if err := db.Close(); err != nil {
+		t.Fatal("Failed to close database", err)
+	}
+
+	// Ensure WAL file persists after close.
+	if _, err := os.Stat(tempFilename + "-wal"); err != nil {
+		t.Fatal("Expected WAL file to be persisted after close", err)
+	}
+}
+
 func TestTimezoneConversion(t *testing.T) {
 	zones := []string{"UTC", "US/Central", "US/Pacific", "Local"}
 	for _, tz := range zones {
@@ -1851,58 +1981,6 @@ func TestSetFileControlInt(t *testing.T) {
 		if _, err := db.Exec(`PRAGMA journal_mode = wal`); err != nil {
 			t.Fatal("Failed to set journal mode:", err)
 		} else if _, err := db.Exec(`CREATE TABLE t (x)`); err != nil {
-			t.Fatal("Failed to create table:", err)
-		}
-		if err := db.Close(); err != nil {
-			t.Fatal("Failed to close database", err)
-		}
-
-		// Ensure WAL file persists after close.
-		if _, err := os.Stat(tempFilename + "-wal"); err != nil {
-			t.Fatal("Expected WAL file to be persisted after close", err)
-		}
-	})
-
-	t.Run("WAL_HOOK", func(t *testing.T) {
-		tempFilename := TempFilename(t)
-		defer os.Remove(tempFilename)
-
-		sql.Register("sqlite3_WAL_HOOK", &SQLiteDriver{
-			ConnectHook: func(conn *SQLiteConn) error {
-				if err := conn.SetFileControlInt("", SQLITE_FCNTL_PERSIST_WAL, 1); err != nil {
-					return fmt.Errorf("Unexpected error from SetFileControlInt(): %w", err)
-				}
-				conn.RegisterWalHook(func(s string, i int) int {
-					walFile := fmt.Sprintf("%s-wal", tempFilename)
-					_, err := os.Stat(walFile)
-					if err != nil {
-						t.Fatal("Failed to get wal file:", err)
-					}
-					//log.Printf("#1wall hook :%s,index:%d,size:%d,path:%s", s, i, info.Size(), info.Name())
-					conn.WalCheckpointV2("main", SQLITE_CHECKPOINT_FULL, 0, 0)
-					//log.Printf("#2wall hook :%s,index:%d,size:%d,path:%s", s, i, info.Size(), info.Name())
-					return SQLITE_OK
-				})
-				return nil
-			},
-		})
-
-		db, err := sql.Open("sqlite3_WAL_HOOK", tempFilename)
-		if err != nil {
-			t.Fatal("Failed to open database:", err)
-		}
-		defer db.Close()
-
-		// Set to WAL mode & write a page.
-		if _, err := db.Exec(`PRAGMA journal_mode = wal`); err != nil {
-			t.Fatal("Failed to set journal mode:", err)
-		} else if _, err := db.Exec(`CREATE TABLE t (x)`); err != nil {
-			t.Fatal("Failed to create table:", err)
-		} else if _, err := db.Exec(`CREATE TABLE t2 (x)`); err != nil {
-			t.Fatal("Failed to create table:", err)
-		} else if _, err := db.Exec(`CREATE TABLE t3 (x)`); err != nil {
-			t.Fatal("Failed to create table:", err)
-		} else if _, err := db.Exec(`CREATE TABLE t4 (x)`); err != nil {
 			t.Fatal("Failed to create table:", err)
 		}
 		if err := db.Close(); err != nil {
