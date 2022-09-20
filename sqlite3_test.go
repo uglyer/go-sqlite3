@@ -15,7 +15,6 @@ import (
 	"errors"
 	"fmt"
 	"io/ioutil"
-	"log"
 	"math/rand"
 	"net/url"
 	"os"
@@ -1034,21 +1033,14 @@ func TestWalCopy(t *testing.T) {
 	//log.Printf("tempFilename:%s", tempFilename)
 	//log.Printf("tempCopyFilename:%s", tempCopyFilename)
 
-	var copyConn *SQLiteConn
 	sql.Register("sqlite3_WAL_COPY", &SQLiteDriver{
 		ConnectHook: func(conn *SQLiteConn) error {
 			if err := conn.SetFileControlInt("", SQLITE_FCNTL_PERSIST_WAL, 1); err != nil {
 				return fmt.Errorf("Unexpected error from SetFileControlInt(): %w", err)
 			}
-			copyConn = conn
 			return nil
 		},
 	})
-	dbCopy, err := sql.Open("sqlite3_WAL_COPY", tempCopyFilename)
-	if err != nil {
-		t.Fatal("Failed to open database:", err)
-	}
-	defer dbCopy.Close()
 	sql.Register("sqlite3_WAL_HOOK", &SQLiteDriver{
 		ConnectHook: func(conn *SQLiteConn) error {
 			if err := conn.SetFileControlInt("", SQLITE_FCNTL_PERSIST_WAL, 1); err != nil {
@@ -1061,13 +1053,27 @@ func TestWalCopy(t *testing.T) {
 				if err != nil {
 					t.Fatal("Failed to get wal file:", err)
 				}
-
 				err = ioutil.WriteFile(targetWalFile, input, 0644)
 				if err != nil {
 					t.Fatal("Error creating", targetWalFile)
 				}
 				conn.WalCheckpointV2("main", SQLITE_CHECKPOINT_TRUNCATE, 0, i)
-				copyConn.WalCheckpointV2("main", SQLITE_CHECKPOINT_TRUNCATE, 0, i)
+				//copyConn.WalCheckpointV2("main", SQLITE_CHECKPOINT_TRUNCATE, 0, i)
+
+				dbCopy, err := sql.Open("sqlite3_WAL_COPY", tempCopyFilename)
+				if err != nil {
+					t.Fatal("Failed to open database:", err)
+				}
+				defer dbCopy.Close()
+				if _, err := dbCopy.Exec(`PRAGMA journal_mode = wal`); err != nil {
+					t.Fatal("Failed to set db copy journal mode:", err)
+				}
+				var row [3]int
+				if err := dbCopy.QueryRow(`PRAGMA wal_checkpoint(TRUNCATE);`).Scan(&row[0], &row[1], &row[2]); err != nil {
+					t.Fatal("Copy db error apply wal", targetWalFile)
+				} else if row[0] != 0 {
+					t.Fatalf("truncation checkpoint failed during restore (%d,%d,%d)", row[0], row[1], row[2])
+				}
 				return SQLITE_OK
 			})
 			return nil
@@ -1079,9 +1085,6 @@ func TestWalCopy(t *testing.T) {
 		t.Fatal("Failed to open database:", err)
 	}
 	defer db.Close()
-	if _, err := dbCopy.Exec(`PRAGMA journal_mode = wal`); err != nil {
-		t.Fatal("Failed to set db copy journal mode:", err)
-	}
 	// Set to WAL mode & write a page.
 	if _, err := db.Exec(`PRAGMA journal_mode = wal`); err != nil {
 		t.Fatal("Failed to set journal mode:", err)
@@ -1093,6 +1096,8 @@ func TestWalCopy(t *testing.T) {
 		t.Fatal("Failed to create table:", err)
 	} else if _, err := db.Exec(`CREATE TABLE t4 (x)`); err != nil {
 		t.Fatal("Failed to create table:", err)
+	} else if _, err := db.Exec(`insert into t4 values (random())`); err != nil {
+		t.Fatal("Failed to insert table:", err)
 	}
 	if err := db.Close(); err != nil {
 		t.Fatal("Failed to close database", err)
