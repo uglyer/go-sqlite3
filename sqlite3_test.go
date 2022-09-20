@@ -15,7 +15,6 @@ import (
 	"errors"
 	"fmt"
 	"io/ioutil"
-	"log"
 	"math/rand"
 	"net/url"
 	"os"
@@ -1875,11 +1874,13 @@ func TestSetFileControlInt(t *testing.T) {
 				}
 				conn.RegisterWalHook(func(s string, i int) int {
 					walFile := fmt.Sprintf("%s-wal", tempFilename)
-					info, err := os.Stat(walFile)
+					_, err := os.Stat(walFile)
 					if err != nil {
 						t.Fatal("Failed to get wal file:", err)
 					}
-					log.Printf("wall hook :%s,index:%d,size:%d,path:%s", s, i, info.Size(), info.Name())
+					//log.Printf("#1wall hook :%s,index:%d,size:%d,path:%s", s, i, info.Size(), info.Name())
+					conn.WalCheckpointV2("main", SQLITE_CHECKPOINT_FULL, 0, 0)
+					//log.Printf("#2wall hook :%s,index:%d,size:%d,path:%s", s, i, info.Size(), info.Name())
 					return SQLITE_OK
 				})
 				return nil

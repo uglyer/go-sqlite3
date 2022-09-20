@@ -254,6 +254,12 @@ func Version() (libVersion string, libVersionNumber int, sourceID string) {
 }
 
 const (
+	// used by wal
+	SQLITE_CHECKPOINT_FULL     = C.SQLITE_CHECKPOINT_FULL
+	SQLITE_CHECKPOINT_PASSIVE  = C.SQLITE_CHECKPOINT_PASSIVE
+	SQLITE_CHECKPOINT_RESTART  = C.SQLITE_CHECKPOINT_RESTART
+	SQLITE_CHECKPOINT_TRUNCATE = C.SQLITE_CHECKPOINT_TRUNCATE
+
 	// used by authorizer and pre_update_hook
 	SQLITE_DELETE = C.SQLITE_DELETE
 	SQLITE_INSERT = C.SQLITE_INSERT
@@ -588,6 +594,29 @@ func (c *SQLiteConn) RegisterWalHook(callback func(string, int) int) {
 	} else {
 		C.sqlite3_wal_hook(c.db, (*[0]byte)(C.walHookTrampoline), newHandle(c, callback))
 	}
+}
+
+// WalCheckpoint
+// see https://sqlite.org/c3ref/wal_checkpoint.html
+func (c *SQLiteConn) WalCheckpoint(zDb string) {
+	cZDb := C.CString(zDb)
+	// Free C Variables
+	defer func() {
+		C.free(unsafe.Pointer(cZDb))
+	}()
+	C.sqlite3_wal_checkpoint(c.db, cZDb)
+}
+
+// WalCheckpointV2
+// see https://sqlite.org/c3ref/wal_checkpoint_v2.html
+func (c *SQLiteConn) WalCheckpointV2(zDb string, eMode int, pnLog int, pnCkpt int) {
+	cZDb := C.CString(zDb)
+	cEMode := C.int(eMode)
+	// Free C Variables
+	defer func() {
+		C.free(unsafe.Pointer(cZDb))
+	}()
+	C.sqlite3_wal_checkpoint_v2(c.db, cZDb, cEMode, (*C.int)(unsafe.Pointer(&pnLog)), (*C.int)(unsafe.Pointer(&pnCkpt)))
 }
 
 // RegisterAuthorizer sets the authorizer for connection.
