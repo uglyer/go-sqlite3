@@ -156,6 +156,7 @@ int compareTrampoline(void*, int, char*, int, char*);
 int commitHookTrampoline(void*);
 void rollbackHookTrampoline(void*);
 void updateHookTrampoline(void*, int, char*, char*, sqlite3_int64);
+void walHookTrampoline(void*, sqlite3*, char*, int);
 
 int authorizerTrampoline(void*, int, char*, char*, char*, char*);
 
@@ -581,7 +582,7 @@ func (c *SQLiteConn) RegisterUpdateHook(callback func(int, string, string, int64
 
 // RegisterWalHook
 // see https://sqlite.org/c3ref/wal_hook.html and https://sqlite.org/wal.html
-func (c *SQLiteConn) RegisterWalHook(callback func(*C.sqlite3, string, int)) {
+func (c *SQLiteConn) RegisterWalHook(callback func(string, int)) {
 	if callback == nil {
 		C.sqlite3_wal_hook(c.db, nil, nil)
 	} else {
