@@ -1029,7 +1029,10 @@ func TestWalCopy(t *testing.T) {
 	tempFilename := TempFilename(t)
 	tempCopyFilename := TempFilename(t)
 	defer os.Remove(tempFilename)
-	//defer os.Remove(tempCopyFilename)
+	defer os.Remove(tempCopyFilename)
+
+	//log.Printf("tempFilename:%s", tempFilename)
+	//log.Printf("tempCopyFilename:%s", tempCopyFilename)
 
 	var copyConn *SQLiteConn
 	sql.Register("sqlite3_WAL_COPY", &SQLiteDriver{
@@ -1063,9 +1066,8 @@ func TestWalCopy(t *testing.T) {
 				if err != nil {
 					t.Fatal("Error creating", targetWalFile)
 				}
-				conn.WalCheckpointV2("main", SQLITE_CHECKPOINT_FULL, 0, 0)
-				copyConn.WalCheckpointV2("main", SQLITE_CHECKPOINT_FULL, 0, 0)
-				log.Printf("tempCopyFilename:%s", tempCopyFilename)
+				conn.WalCheckpointV2("main", SQLITE_CHECKPOINT_TRUNCATE, 0, i)
+				copyConn.WalCheckpointV2("main", SQLITE_CHECKPOINT_TRUNCATE, 0, i)
 				return SQLITE_OK
 			})
 			return nil
