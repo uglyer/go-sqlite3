@@ -579,6 +579,16 @@ func (c *SQLiteConn) RegisterUpdateHook(callback func(int, string, string, int64
 	}
 }
 
+// RegisterWalHook
+// see https://sqlite.org/c3ref/wal_hook.html and https://sqlite.org/wal.html
+func (c *SQLiteConn) RegisterWalHook(callback func(*C.sqlite3, string, int)) {
+	if callback == nil {
+		C.sqlite3_wal_hook(c.db, nil, nil)
+	} else {
+		C.sqlite3_wal_hook(c.db, (*[0]byte)(C.walHookTrampoline), newHandle(c, callback))
+	}
+}
+
 // RegisterAuthorizer sets the authorizer for connection.
 //
 // The parameters to the callback are the operation (one of the constants

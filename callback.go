@@ -76,6 +76,12 @@ func updateHookTrampoline(handle unsafe.Pointer, op int, db *C.char, table *C.ch
 	callback(op, C.GoString(db), C.GoString(table), rowid)
 }
 
+//export walHookTrampoline
+func walHookTrampoline(handle unsafe.Pointer, db *C.sqlite3, dbName *C.char, logIndex int) {
+	callback := lookupHandle(handle).(func(*C.sqlite3, string, int))
+	callback(db, C.GoString(dbName), logIndex)
+}
+
 //export authorizerTrampoline
 func authorizerTrampoline(handle unsafe.Pointer, op int, arg1 *C.char, arg2 *C.char, arg3 *C.char) int {
 	callback := lookupHandle(handle).(func(int, string, string, string) int)
@@ -360,11 +366,11 @@ func callbackRetGeneric(ctx *C.sqlite3_context, v reflect.Value) error {
 	}
 
 	cb, err := callbackRet(v.Elem().Type())
-        if err != nil {
-                return err
-        }
+	if err != nil {
+		return err
+	}
 
-        return cb(ctx, v.Elem())
+	return cb(ctx, v.Elem())
 }
 
 func callbackRet(typ reflect.Type) (callbackRetConverter, error) {
