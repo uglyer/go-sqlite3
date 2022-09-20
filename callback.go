@@ -77,9 +77,9 @@ func updateHookTrampoline(handle unsafe.Pointer, op int, db *C.char, table *C.ch
 }
 
 //export walHookTrampoline
-func walHookTrampoline(handle unsafe.Pointer, db *C.sqlite3, dbName *C.char, logIndex int) {
-	callback := lookupHandle(handle).(func(string, int))
-	callback(C.GoString(dbName), logIndex)
+func walHookTrampoline(handle unsafe.Pointer, db *C.sqlite3, dbName *C.char, logIndex int) int {
+	callback := lookupHandle(handle).(func(string, int) int)
+	return callback(C.GoString(dbName), logIndex)
 }
 
 //export authorizerTrampoline

@@ -1873,13 +1873,14 @@ func TestSetFileControlInt(t *testing.T) {
 				if err := conn.SetFileControlInt("", SQLITE_FCNTL_PERSIST_WAL, 1); err != nil {
 					return fmt.Errorf("Unexpected error from SetFileControlInt(): %w", err)
 				}
-				conn.RegisterWalHook(func(s string, i int) {
+				conn.RegisterWalHook(func(s string, i int) int {
 					walFile := fmt.Sprintf("%s-wal", tempFilename)
 					info, err := os.Stat(walFile)
 					if err != nil {
 						t.Fatal("Failed to get wal file:", err)
 					}
 					log.Printf("wall hook :%s,index:%d,size:%d,path:%s", s, i, info.Size(), info.Name())
+					return SQLITE_OK
 				})
 				return nil
 			},
@@ -1899,6 +1900,8 @@ func TestSetFileControlInt(t *testing.T) {
 		} else if _, err := db.Exec(`CREATE TABLE t2 (x)`); err != nil {
 			t.Fatal("Failed to create table:", err)
 		} else if _, err := db.Exec(`CREATE TABLE t3 (x)`); err != nil {
+			t.Fatal("Failed to create table:", err)
+		} else if _, err := db.Exec(`CREATE TABLE t4 (x)`); err != nil {
 			t.Fatal("Failed to create table:", err)
 		}
 		if err := db.Close(); err != nil {
