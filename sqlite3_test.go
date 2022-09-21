@@ -15,6 +15,7 @@ import (
 	"errors"
 	"fmt"
 	"io/ioutil"
+	"log"
 	"math/rand"
 	"net/url"
 	"os"
@@ -1132,7 +1133,9 @@ func TestWalCopyWithTransaction(t *testing.T) {
 				return fmt.Errorf("Unexpected error from SetFileControlInt(): %w", err)
 			}
 			conn.RegisterWalHook(func(s string, i int) int {
-				// TODO 校验是否在事务过程中
+				// 仅txnState == SQLITE_TXN_NONE 会触发调用
+				txnState := conn.TxnState("main")
+				log.Printf("txnState:%d", txnState)
 				sourceWalFile := fmt.Sprintf("%s-wal", tempFilename)
 				targetWalFile := fmt.Sprintf("%s-wal", tempCopyFilename)
 				input, err := ioutil.ReadFile(sourceWalFile)
@@ -1198,17 +1201,25 @@ func TestWalCopyWithTransaction(t *testing.T) {
 	} else if row[0] != 0 {
 		t.Fatalf("get count error (%d)", row[0])
 	}
-	if _, err := db.Exec(`insert into t values ("test")`); err != nil {
-		t.Fatal("Failed to insert t:", err)
-	}
-	if _, err := db.Exec(`COMMIT`); err != nil {
-		t.Fatal("Failed to begin:", err)
-	}
 	dbCopy, err := sql.Open("sqlite3_WAL_COPY", tempCopyFilename)
 	if err != nil {
 		t.Fatal("Failed to open database:", err)
 	}
 	defer dbCopy.Close()
+	if err := db.QueryRow(`select count(x) from t;`).Scan(&row[0]); err != nil {
+		t.Fatal("Failed get count")
+	} else if row[0] != 0 {
+		t.Fatalf("get count error (%d)", row[0])
+	}
+	if _, err := db.Exec(`BEGIN EXCLUSIVE`); err != nil {
+		t.Fatal("Failed to begin:", err)
+	}
+	if _, err := db.Exec(`insert into t values ("test")`); err != nil {
+		t.Fatal("Failed to insert t:", err)
+	}
+	if _, err := db.Exec(`COMMIT`); err != nil {
+		t.Fatal("Failed to commit:", err)
+	}
 	if _, err := dbCopy.Exec(`PRAGMA journal_mode = wal`); err != nil {
 		t.Fatal("Failed to set db copy journal mode:", err)
 	}

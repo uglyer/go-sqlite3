@@ -596,6 +596,16 @@ func (c *SQLiteConn) RegisterWalHook(callback func(string, int) int) {
 	}
 }
 
+// TxnState
+// see https://www.sqlite.net.cn/c3ref/txn_state.html
+func (c *SQLiteConn) TxnState(zSchema string) int {
+	cZSchema := C.CString(zSchema)
+	defer func() {
+		C.free(unsafe.Pointer(cZSchema))
+	}()
+	return int(C.sqlite3_txn_state(c.db, cZSchema))
+}
+
 // WalCheckpoint
 // see https://sqlite.org/c3ref/wal_checkpoint.html
 func (c *SQLiteConn) WalCheckpoint(zDb string) {
