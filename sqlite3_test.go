@@ -1109,6 +1109,124 @@ func TestWalCopy(t *testing.T) {
 	}
 }
 
+func TestWalCopyWithTransaction(t *testing.T) {
+	tempFilename := TempFilename(t)
+	tempCopyFilename := TempFilename(t)
+	defer os.Remove(tempFilename)
+	defer os.Remove(tempCopyFilename)
+
+	//log.Printf("tempFilename:%s", tempFilename)
+	//log.Printf("tempCopyFilename:%s", tempCopyFilename)
+
+	sql.Register("sqlite3_WAL_COPY", &SQLiteDriver{
+		ConnectHook: func(conn *SQLiteConn) error {
+			if err := conn.SetFileControlInt("", SQLITE_FCNTL_PERSIST_WAL, 1); err != nil {
+				return fmt.Errorf("Unexpected error from SetFileControlInt(): %w", err)
+			}
+			return nil
+		},
+	})
+	sql.Register("sqlite3_WAL_HOOK", &SQLiteDriver{
+		ConnectHook: func(conn *SQLiteConn) error {
+			if err := conn.SetFileControlInt("", SQLITE_FCNTL_PERSIST_WAL, 1); err != nil {
+				return fmt.Errorf("Unexpected error from SetFileControlInt(): %w", err)
+			}
+			conn.RegisterWalHook(func(s string, i int) int {
+				// TODO 校验是否在事务过程中
+				sourceWalFile := fmt.Sprintf("%s-wal", tempFilename)
+				targetWalFile := fmt.Sprintf("%s-wal", tempCopyFilename)
+				input, err := ioutil.ReadFile(sourceWalFile)
+				if err != nil {
+					t.Fatal("Failed to get wal file:", err)
+				}
+				err = ioutil.WriteFile(targetWalFile, input, 0644)
+				if err != nil {
+					t.Fatal("Error creating", targetWalFile)
+				}
+				conn.WalCheckpointV2("main", SQLITE_CHECKPOINT_TRUNCATE, 0, i)
+				//copyConn.WalCheckpointV2("main", SQLITE_CHECKPOINT_TRUNCATE, 0, i)
+
+				dbCopy, err := sql.Open("sqlite3_WAL_COPY", tempCopyFilename)
+				if err != nil {
+					t.Fatal("Failed to open database:", err)
+				}
+				defer dbCopy.Close()
+				if _, err := dbCopy.Exec(`PRAGMA journal_mode = wal`); err != nil {
+					t.Fatal("Failed to set db copy journal mode:", err)
+				}
+				var row [3]int
+				if err := dbCopy.QueryRow(`PRAGMA wal_checkpoint(TRUNCATE);`).Scan(&row[0], &row[1], &row[2]); err != nil {
+					t.Fatal("Copy db error apply wal", targetWalFile)
+				} else if row[0] != 0 {
+					t.Fatalf("truncation checkpoint failed during restore (%d,%d,%d)", row[0], row[1], row[2])
+				}
+				return SQLITE_OK
+			})
+			return nil
+		},
+	})
+
+	db, err := sql.Open("sqlite3_WAL_HOOK", tempFilename)
+	if err != nil {
+		t.Fatal("Failed to open database:", err)
+	}
+	defer db.Close()
+	// Set to WAL mode & write a page.
+	if _, err := db.Exec(`PRAGMA journal_mode = wal`); err != nil {
+		t.Fatal("Failed to set journal mode:", err)
+	}
+	if _, err := db.Exec(`CREATE TABLE t (x)`); err != nil {
+		t.Fatal("Failed to create table:", err)
+	}
+	if _, err := db.Exec(`BEGIN EXCLUSIVE`); err != nil {
+		t.Fatal("Failed to begin:", err)
+	}
+	if _, err := db.Exec(`insert into t values ("test")`); err != nil {
+		t.Fatal("Failed to insert t:", err)
+	}
+	var row [1]int
+	if err := db.QueryRow(`select count(x) from t;`).Scan(&row[0]); err != nil {
+		t.Fatal("Failed get count")
+	} else if row[0] != 1 {
+		t.Fatalf("get count error (%d)", row[0])
+	}
+	if _, err := db.Exec(`ROLLBACK`); err != nil {
+		t.Fatal("Failed to begin:", err)
+	}
+	if err := db.QueryRow(`select count(x) from t;`).Scan(&row[0]); err != nil {
+		t.Fatal("Failed get count")
+	} else if row[0] != 0 {
+		t.Fatalf("get count error (%d)", row[0])
+	}
+	if _, err := db.Exec(`insert into t values ("test")`); err != nil {
+		t.Fatal("Failed to insert t:", err)
+	}
+	if _, err := db.Exec(`COMMIT`); err != nil {
+		t.Fatal("Failed to begin:", err)
+	}
+	dbCopy, err := sql.Open("sqlite3_WAL_COPY", tempCopyFilename)
+	if err != nil {
+		t.Fatal("Failed to open database:", err)
+	}
+	defer dbCopy.Close()
+	if _, err := dbCopy.Exec(`PRAGMA journal_mode = wal`); err != nil {
+		t.Fatal("Failed to set db copy journal mode:", err)
+	}
+	if err := db.QueryRow(`select count(x) from t;`).Scan(&row[0]); err != nil {
+		t.Fatal("Failed get count")
+	} else if row[0] != 1 {
+		t.Fatalf("get count error (%d)", row[0])
+	}
+	if err := db.Close(); err != nil {
+		t.Fatal("Failed to close database", err)
+	}
+
+	// Ensure WAL file persists after close.
+	if _, err := os.Stat(tempFilename + "-wal"); err != nil {
+		t.Fatal("Expected WAL file to be persisted after close", err)
+	}
+}
+
 func TestTimezoneConversion(t *testing.T) {
 	zones := []string{"UTC", "US/Central", "US/Pacific", "Local"}
 	for _, tz := range zones {
