@@ -323,7 +323,6 @@ static sqlite3_vfs
 import "C"
 import (
 	"io"
-	"log"
 	"os"
 	"reflect"
 	"runtime"
@@ -455,7 +454,6 @@ func (vfs *sqliteVFS) open(zName *C.char, pFile *C.sqlite3_file, flags C.int, pO
 	if goFlags&int(C.SQLITE_OPEN_READWRITE) != 0 {
 		oflags |= os.O_RDWR
 	}
-
 	vf, err := vfs.vfs.Open(name, oflags)
 	rc = pickErrCode(err)
 
@@ -876,7 +874,8 @@ func VFSRegister(name string, vfs VFS, options ...vfsRegisterOption) error {
 	vfssLock.Lock()
 	defer vfssLock.Unlock()
 	cname := C.CString(name)
-	defer C.free(unsafe.Pointer(cname))
+	// 不能销毁, 销毁后 c vfsList zName 会变为 null, 导致 sqlite3_vfs_find 无法查找到正确的 vfs
+	// defer C.free(unsafe.Pointer(cname))
 
 	if o.maxPathnameSize <= 0 {
 		o.maxPathnameSize = VFSDefaultMaxPathnameSize
@@ -890,9 +889,7 @@ func VFSRegister(name string, vfs VFS, options ...vfsRegisterOption) error {
 	vfss[pvfs] = _vfs
 	runtime.SetFinalizer(_vfs, (*sqliteVFS).Close)
 
-	log.Printf("b rc:%v", C.sqlite3_vfs_find(cname))
 	rc := int(C.sqlite3_vfs_register(cvfs, C.int(o.makeDflt)))
-	log.Printf("rc:%v,%v,%v", name, rc, C.sqlite3_vfs_find(cname))
 	if rc != C.SQLITE_OK {
 		return Error{Code: ErrNo(rc)}
 	}
@@ -922,7 +919,6 @@ func deleteVFS(vfs unsafe.Pointer) {
 }
 
 func lookupVFSFile(file unsafe.Pointer) *sqliteVFSFile {
-	log.Printf("lookupVFSFile:%v", file)
 	vfilesLock.Lock()
 	defer vfilesLock.Unlock()
 	return vfiles[file]
