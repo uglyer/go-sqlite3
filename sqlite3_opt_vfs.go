@@ -153,6 +153,8 @@ cVFSOpen(
 	goio->xFileControl = cVFSFileControl;
 	goio->xSectorSize = cVFSSectorSize;
 	goio->xDeviceCharacteristics = cVFSDeviceCharacteristics;
+    // todo 实现 sqlite3_io_methods iVersion = 2&3 中的所有接口
+	//goio->xShmMap = winShmMap;
 
 	GoFile *p = (GoFile*)pFile;
 	p->base.pMethods = goio;
