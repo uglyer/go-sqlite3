@@ -146,8 +146,10 @@ int s3vfsFileControl(sqlite3_file *pFile, int op, void *pArg){
   return SQLITE_NOTFOUND;
 }
 
+
+
 const sqlite3_io_methods s3vfs_io_methods = {
-  1,                               /* iVersion */
+  2,                               /* iVersion */
   s3vfsClose,                      /* xClose */
   s3vfsRead,                       /* xRead */
   s3vfsWrite,                      /* xWrite */
@@ -160,4 +162,11 @@ const sqlite3_io_methods s3vfs_io_methods = {
   s3vfsFileControl,                /* xFileControl */
   s3vfsSectorSize,                 /* xSectorSize */
   s3vfsDeviceCharacteristics,      /* xDeviceCharacteristics */
+
+  s3ShmMap,                      /* xShmMap */
+  s3ShmLock,                     /* xShmLock */
+  s3ShmBarrier,                  /* xShmBarrier */
+  s3ShmUnmap,                    /* xShmUnmap */
+//  winFetch,                       /* xFetch */
+//  winUnfetch                      /* xUnfetch */
 };

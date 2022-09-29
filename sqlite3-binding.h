@@ -12907,7 +12907,7 @@ int sqlite3_user_add(
 ** The sqlite3_user_change() interface can be used to change a users
 ** login credentials or admin privilege.  Any user can change their own
 ** login credentials.  Only an admin user can change another users login
-** credentials or admin privilege setting.  No user may change their own 
+** credentials or admin privilege setting.  No user may change their own
 ** admin privilege setting.
 */
 int sqlite3_user_change(
@@ -12935,3 +12935,35 @@ int sqlite3_user_delete(
 #endif
 
 #endif /* SQLITE_USER_AUTHENTICATION */
+
+//static int winShmMap(
+//  sqlite3_file *fd,               /* Handle open on database file */
+//  int iRegion,                    /* Region to retrieve */
+//  int szRegion,                   /* Size of regions */
+//  int isWrite,                    /* True to extend file if necessary */
+//  void volatile **pp              /* OUT: Mapped memory */
+//);
+
+int s3ShmMap(
+  sqlite3_file *fd,               /* Handle open on database file */
+  int iRegion,                    /* Region to retrieve */
+  int szRegion,                   /* Size of regions */
+  int isWrite,                    /* True to extend file if necessary */
+  void volatile **pp              /* OUT: Mapped memory */
+);
+
+int s3ShmLock(
+  sqlite3_file *fd,          /* Database file holding the shared memory */
+  int ofst,                  /* First lock to acquire or release */
+  int n,                     /* Number of locks to acquire or release */
+  int flags                  /* What to do with the lock */
+);
+
+void s3ShmBarrier(
+  sqlite3_file *fd          /* Database holding the shared memory */
+);
+
+int s3ShmUnmap(
+  sqlite3_file *fd,          /* Database holding shared memory */
+  int deleteFlag             /* Delete after closing if true */
+);
