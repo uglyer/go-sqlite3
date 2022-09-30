@@ -658,6 +658,31 @@ static int vfsFileShmLock(sqlite3_file *file, int ofst, int n, int flags)
 	return rv;
 }
 
+
+static void vfsFileShmBarrier(sqlite3_file *file)
+{
+	(void)file;
+	/* This is a no-op since we expect SQLite to be compiled with mutex
+	 * support (i.e. SQLITE_MUTEX_OMIT or SQLITE_MUTEX_NOOP are *not*
+	 * defined, see sqliteInt.h). */
+}
+
+static void vfsShmUnmap(struct vfsShm *s)
+{
+	s->refcount--;
+	if (s->refcount == 0) {
+		vfsShmReset(s);
+	}
+}
+
+static int vfsFileShmUnmap(sqlite3_file *file, int delete_flag)
+{
+	struct s3vfsFile *f = (struct s3vfsFile *)file;
+	(void)delete_flag;
+	vfsShmUnmap(&f->database->shm);
+	return SQLITE_OK;
+}
+
 const sqlite3_io_methods s3vfs_io_methods = {
   2,                               /* iVersion */
   s3vfsClose,                      /* xClose */
@@ -675,8 +700,8 @@ const sqlite3_io_methods s3vfs_io_methods = {
 
   xVfsFileShmMap,                      /* xShmMap */
   vfsFileShmLock,                     /* xShmLock */
-//  s3ShmBarrier,                  /* xShmBarrier */
-//  s3ShmUnmap,                    /* xShmUnmap */
-//  winFetch,                       /* xFetch */
-//  winUnfetch                      /* xUnfetch */
+  vfsFileShmBarrier,                  /* xShmBarrier */
+  vfsFileShmUnmap,                    /* xShmUnmap */
+  0,                       /* xFetch */
+  0                      /* xUnfetch */
 };
