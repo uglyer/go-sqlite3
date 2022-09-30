@@ -65,6 +65,7 @@ func (vfs *TmpVFS) Open(name string, flags OpenFlag) (File, OpenFlag, error) {
 }
 
 func (vfs *TmpVFS) Delete(name string, dirSync bool) error {
+	log.Printf("vfs.delete:%s", name)
 	fname := filepath.Join(vfs.tmpdir, name)
 	if !filepath.HasPrefix(fname, vfs.tmpdir) {
 		return errors.New("illegal path")

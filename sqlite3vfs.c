@@ -445,15 +445,15 @@ int xVfsShmMap(struct vfsShm *s,
 		     bool extend,
 		     void volatile **out)
 {
-    printf("xVfsShmMap\n");
+//    printf("xVfsShmMap\n");
 	void *region;
 	int rv;
-    printf("xVfsShmMap #0:%s\n",s != NULL ? " s->regions != NULL ": "s->regions is NULL");
-    printf("xVfsShmMap #1:%s\n",s->regions != NULL ? " s->regions != NULL ": "s->regions is NULL");
-    s->regions != NULL;
-    printf("xVfsShmMap #2:%d\n",region_index);
-    region_index < s->n_regions;
-    printf("xVfsShmMap #4\n");
+//    printf("xVfsShmMap #0:%s\n",s != NULL ? " s->regions != NULL ": "s->regions is NULL");
+//    printf("xVfsShmMap #1:%s\n",s->regions != NULL ? " s->regions != NULL ": "s->regions is NULL");
+//    s->regions != NULL;
+//    printf("xVfsShmMap #2:%d\n",region_index);
+//    region_index < s->n_regions;
+//    printf("xVfsShmMap #4\n");
 
 	if (s->regions != NULL && region_index < s->n_regions) {
     printf("xVfsShmMap s->regions != NULL && region_index < s->n_regions\n");
@@ -461,9 +461,9 @@ int xVfsShmMap(struct vfsShm *s,
 		region = s->regions[region_index];
 		assert(region != NULL);
 	} else {
-    printf("xVfsShmMap s->regions != NULL && region_index < s->n_regions else\n");
+//    printf("xVfsShmMap s->regions != NULL && region_index < s->n_regions else\n");
 		if (extend) {
-    printf("xVfsShmMap extend\n");
+//    printf("xVfsShmMap extend\n");
 			void **regions;
 
 			/* We should grow the map one region at a time. */
@@ -491,7 +491,7 @@ int xVfsShmMap(struct vfsShm *s,
 			s->n_regions++;
 
 		} else {
-    printf("xVfsShmMap no extend\n");
+//    printf("xVfsShmMap no extend\n");
 			/* The region was not allocated and we don't have to
 			 * extend the map. */
 			region = NULL;
@@ -503,14 +503,14 @@ int xVfsShmMap(struct vfsShm *s,
 	if (region_index == 0 && region != NULL) {
 		s->refcount++;
 	}
-    printf("SQLITE_OK\n");
+//    printf("SQLITE_OK\n");
 	return SQLITE_OK;
 
 err_after_region_malloc:
-    printf("xVfsShmMap err_after_region_malloc\n");
+//    printf("xVfsShmMap err_after_region_malloc\n");
 	sqlite3_free(region);
 err:
-    printf("xVfsShmMap err\n");
+//    printf("xVfsShmMap err\n");
 	assert(rv != SQLITE_OK);
 	*out = NULL;
 	return rv;
@@ -524,7 +524,7 @@ int xVfsFileShmMap(sqlite3_file *file, /* Handle open on database file */
 			 void volatile **out /* OUT: Mapped memory */
 )
 {
-    printf("xVfsFileShmMap\n");
+//    printf("xVfsFileShmMap\n");
 	struct s3vfsFile *f = (struct s3vfsFile *)file;
 
 	assert(f->type == VFS__DATABASE);
@@ -600,7 +600,7 @@ static int vfsShmUnlock(struct vfsShm *s, int ofst, int n, int flags)
 
 static int vfsFileShmLock(sqlite3_file *file, int ofst, int n, int flags)
 {
-  printf("vfsFileShmLock flag:%d\n",flags);
+//  printf("vfsFileShmLock flag:%d\n",flags);
 	struct s3vfsFile *f;
 	struct vfsShm *shm;
 //	struct vfsWal *wal;
@@ -638,7 +638,7 @@ static int vfsFileShmLock(sqlite3_file *file, int ofst, int n, int flags)
 	} else {
 		rv = vfsShmLock(shm, ofst, n, flags);
 	}
-  printf("vfsFileShmLock:%d\n",rv);
+//  printf("vfsFileShmLock:%d\n",rv);
 //	wal = &f->database->wal;
 //	if (rv == SQLITE_OK && ofst == VFS__WAL_WRITE_LOCK) {
 //		assert(n == 1);
