@@ -7,9 +7,46 @@
 #include "sqlite3-binding.h"
 #endif
 
+enum vfsFileType {
+	VFS__DATABASE, /* Main database file */
+	VFS__JOURNAL,  /* Default SQLite journal file */
+	VFS__WAL       /* Write-Ahead Log */
+};
+
+/* Hold content for a shared memory mapping. */
+struct vfsShm
+{
+	void **regions;     /* Pointers to shared memory regions. */
+	unsigned n_regions; /* Number of shared memory regions. */
+	unsigned refcount;  /* Number of outstanding mappings. */
+	unsigned shared[SQLITE_SHM_NLOCK];    /* Count of shared locks */
+	unsigned exclusive[SQLITE_SHM_NLOCK]; /* Count of exclusive locks */
+};
+
+/* Database-specific content */
+struct vfsDatabase
+{
+	char *name;        /* Database name. */
+	void **pages;      /* All database. */
+	unsigned n_pages;  /* Number of pages. */
+	struct vfsShm shm; /* Shared memory. */
+//	struct vfsWal wal; /* Associated WAL. */
+};
+
+/* Custom dqlite VFS. Contains pointers to all databases that were created. */
+struct vfs
+{
+	struct vfsDatabase **databases; /* Database objects */
+	unsigned n_databases;           /* Number of databases */
+	int error;                      /* Last error occurred. */
+};
+
 typedef struct s3vfsFile {
   sqlite3_file base; /* IO methods */
   sqlite3_uint64 id; /* Go object id  */
+  struct vfs *vfs;
+  enum vfsFileType type;        /* Associated file (main db or WAL). */
+  struct vfsDatabase *database; /* Underlying database content. */
 } s3vfsFile;
 
 int s3vfsNew(char* name, int maxPathName);

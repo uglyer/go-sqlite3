@@ -1,10 +1,235 @@
 #include "sqlite3vfs.h"
 #include <stdlib.h>
 #include <stdio.h>
+#include <assert.h>
+#include <stdbool.h>
+#include <string.h>
 
 #ifdef SQLITE3VFS_LOADABLE_EXT
 SQLITE_EXTENSION_INIT1
 #endif
+
+
+/* Maximum pathname length supported by this VFS. */
+#define VFS__MAX_PATHNAME 512
+
+/* WAL magic value. Either this value, or the same value with the least
+ * significant bit also set (FORMAT__WAL_MAGIC | 0x00000001) is stored in 32-bit
+ * big-endian format in the first 4 bytes of a WAL file.
+ *
+ * If the LSB is set, then the checksums for each frame within the WAL file are
+ * calculated by treating all data as an array of 32-bit big-endian
+ * words. Otherwise, they are calculated by interpreting all data as 32-bit
+ * little-endian words. */
+#define VFS__WAL_MAGIC 0x377f0682
+
+/* WAL format version (same for WAL index). */
+#define VFS__WAL_VERSION 3007000
+
+/* Index of the write lock in the WAL-index header locks area. */
+#define VFS__WAL_WRITE_LOCK 0
+
+/* Write ahead log header size. */
+#define VFS__WAL_HEADER_SIZE 32
+
+/* Write ahead log frame header size. */
+#define VFS__FRAME_HEADER_SIZE 24
+
+/* Size of the first part of the WAL index header. */
+#define VFS__WAL_INDEX_HEADER_SIZE 48
+
+/* Size of a single memory-mapped WAL index region. */
+#define VFS__WAL_INDEX_REGION_SIZE 32768
+
+/* Create a new vfs object. */
+static struct vfs *vfsCreate(void)
+{
+	struct vfs *v;
+
+	v = sqlite3_malloc(sizeof *v);
+	if (v == NULL) {
+		return NULL;
+	}
+
+	v->databases = NULL;
+	v->n_databases = 0;
+
+	return v;
+}
+
+/* Release all resources used by a shared memory mapping. */
+static void vfsShmClose(struct vfsShm *s)
+{
+	void *region;
+	unsigned i;
+
+	assert(s != NULL);
+
+	/* Free all regions. */
+	for (i = 0; i < s->n_regions; i++) {
+		region = *(s->regions + i);
+		assert(region != NULL);
+		sqlite3_free(region);
+	}
+
+	/* Free the shared memory region array. */
+	if (s->regions != NULL) {
+		sqlite3_free(s->regions);
+	}
+}
+
+/* Release all memory used by a database object. */
+static void vfsDatabaseClose(struct vfsDatabase *d)
+{
+	unsigned i;
+	for (i = 0; i < d->n_pages; i++) {
+		sqlite3_free(d->pages[i]);
+	}
+	if (d->pages != NULL) {
+		sqlite3_free(d->pages);
+	}
+	vfsShmClose(&d->shm);
+//	vfsWalClose(&d->wal);
+}
+
+/* Destroy the content of a database object. */
+static void vfsDatabaseDestroy(struct vfsDatabase *d)
+{
+	assert(d != NULL);
+
+	sqlite3_free(d->name);
+
+	vfsDatabaseClose(d);
+	sqlite3_free(d);
+}
+
+/* Release the memory used internally by the VFS object.
+ *
+ * All file content will be de-allocated, so dangling open FDs against
+ * those files will be broken.
+ */
+static void vfsDestroy(struct vfs *r)
+{
+	unsigned i;
+
+	assert(r != NULL);
+
+	for (i = 0; i < r->n_databases; i++) {
+		struct vfsDatabase *database = r->databases[i];
+		vfsDatabaseDestroy(database);
+	}
+
+	if (r->databases != NULL) {
+		sqlite3_free(r->databases);
+	}
+}
+
+static bool vfsFilenameEndsWith(const char *filename, const char *suffix)
+{
+	size_t n_filename = strlen(filename);
+	size_t n_suffix = strlen(suffix);
+	if (n_suffix > n_filename) {
+		return false;
+	}
+	return strncmp(filename + n_filename - n_suffix, suffix, n_suffix) == 0;
+}
+
+/* Find the database object associated with the given filename. */
+static struct vfsDatabase *vfsDatabaseLookup(struct vfs *v,
+					     const char *filename)
+{
+	size_t n = strlen(filename);
+	unsigned i;
+
+	assert(v != NULL);
+	assert(filename != NULL);
+
+	if (vfsFilenameEndsWith(filename, "-wal")) {
+		n -= strlen("-wal");
+	}
+	if (vfsFilenameEndsWith(filename, "-journal")) {
+		n -= strlen("-journal");
+	}
+
+	for (i = 0; i < v->n_databases; i++) {
+		struct vfsDatabase *database = v->databases[i];
+		if (strncmp(database->name, filename, n) == 0) {
+			// Found matching file.
+			return database;
+		}
+	}
+
+	return NULL;
+}
+
+static int vfsDeleteDatabase(struct vfs *r, const char *name)
+{
+	unsigned i;
+
+	for (i = 0; i < r->n_databases; i++) {
+		struct vfsDatabase *database = r->databases[i];
+		unsigned j;
+
+		if (strcmp(database->name, name) != 0) {
+			continue;
+		}
+
+		/* Free all memory allocated for this file. */
+		vfsDatabaseDestroy(database);
+
+		/* Shift all other contents objects. */
+		for (j = i + 1; j < r->n_databases; j++) {
+			r->databases[j - 1] = r->databases[j];
+		}
+		r->n_databases--;
+
+		return SQLITE_OK;
+	}
+
+//	r->error = ENOENT;
+	return SQLITE_IOERR_DELETE_NOENT;
+}
+
+/* Initialize the shared memory mapping of a database file. */
+static void vfsShmInit(struct vfsShm *s)
+{
+	int i;
+
+	s->regions = NULL;
+	s->n_regions = 0;
+	s->refcount = 0;
+
+	for (i = 0; i < SQLITE_SHM_NLOCK; i++) {
+		s->shared[i] = 0;
+		s->exclusive[i] = 0;
+	}
+}
+
+/* Revert the shared mamory to its initial state. */
+static void vfsShmReset(struct vfsShm *s)
+{
+	vfsShmClose(s);
+	vfsShmInit(s);
+}
+
+/* Initialize a new WAL object. */
+//static void vfsWalInit(struct vfsWal *w)
+//{
+//	memset(w->hdr, 0, VFS__WAL_HEADER_SIZE);
+//	w->frames = NULL;
+//	w->n_frames = 0;
+//	w->tx = NULL;
+//	w->n_tx = 0;
+//}
+
+/* Initialize a new database object. */
+static void vfsDatabaseInit(struct vfsDatabase *d)
+{
+	d->pages = NULL;
+	d->n_pages = 0;
+	vfsShmInit(&d->shm);
+//	vfsWalInit(&d->wal);
+}
 
 extern int goVFSOpen(sqlite3_vfs* vfs, const char * name, sqlite3_file* file, int flags, int *outFlags);
 extern int goVFSDelete(sqlite3_vfs*, const char *zName, int syncDir);
@@ -37,6 +262,8 @@ int s3vfsNew(char* name, int maxPathName) {
 
   delegate = sqlite3_vfs_find(0);
 
+  vfs->pAppData = vfsCreate();
+
   vfs->iVersion = 2;
   vfs->szOsFile = sizeof(s3vfsFile);
   vfs->mxPathname = maxPathName;
@@ -58,10 +285,107 @@ int s3vfsNew(char* name, int maxPathName) {
   return sqlite3_vfs_register(vfs, 0);
 }
 
+
+/* Create a database object and add it to the databases array. */
+static struct vfsDatabase *vfsCreateDatabase(struct vfs *v, const char *name)
+{
+	unsigned n = v->n_databases + 1;
+	struct vfsDatabase **databases;
+	struct vfsDatabase *d;
+
+	assert(name != NULL);
+
+	/* Create a new entry. */
+	databases = sqlite3_realloc64(v->databases, sizeof *databases * n);
+	if (databases == NULL) {
+		goto oom;
+	}
+	v->databases = databases;
+
+	d = sqlite3_malloc(sizeof *d);
+	if (d == NULL) {
+		goto oom;
+	}
+
+	d->name = sqlite3_malloc64(strlen(name) + 1);
+	if (d->name == NULL) {
+		goto oom_after_database_malloc;
+	}
+	strcpy(d->name, name);
+
+	vfsDatabaseInit(d);
+
+	v->databases[n - 1] = d;
+	v->n_databases = n;
+
+	return d;
+
+oom_after_database_malloc:
+	sqlite3_free(d);
+oom:
+	return NULL;
+}
+
 int s3vfsOpen(sqlite3_vfs* vfs, const char * name, sqlite3_file* file, int flags, int *outFlags) {
   int ret = goVFSOpen(vfs, name, file, flags, outFlags);
-  file->pMethods = &s3vfs_io_methods;
+  /* Search if the database object exists already. */
+
+	int rc;
+	struct vfs *v;
+    enum vfsFileType type;
+    struct vfsDatabase *database;
+    bool exists;
+	int create = flags & SQLITE_OPEN_CREATE;
+    v = (struct vfs *)(vfs->pAppData);
+    database = vfsDatabaseLookup(v, name);
+    exists = database != NULL;
+    if (flags & SQLITE_OPEN_MAIN_DB) {
+        type = VFS__DATABASE;
+    } else if (flags & SQLITE_OPEN_MAIN_JOURNAL) {
+        type = VFS__JOURNAL;
+    } else if (flags & SQLITE_OPEN_WAL) {
+        type = VFS__WAL;
+    } else {
+//        v->error = ENOENT;
+        return SQLITE_CANTOPEN;
+    }
+/* todo If file exists, and the exclusive flag is on, return an error. */
+	if (!exists) {
+        /* When opening a WAL or journal file we expect the main
+         * database file to have already been created. */
+        if (type == VFS__WAL || type == VFS__JOURNAL) {
+//            v->error = ENOENT;
+			rc = SQLITE_CANTOPEN;
+            goto err;
+        }
+
+        assert(type == VFS__DATABASE);
+
+        /* Check the create flag. */
+        if (!create) {
+//            v->error = ENOENT;
+			rc = SQLITE_CANTOPEN;
+            goto err;
+        }
+
+        database = vfsCreateDatabase(v, name);
+        if (database == NULL) {
+//            v->error = ENOMEM;
+			rc = SQLITE_CANTOPEN;
+            goto err;
+        }
+    }
+
+    file->pMethods = &s3vfs_io_methods;
+	struct s3vfsFile *f;
+    f = (struct s3vfsFile *)file;
+    f->vfs = v;
+    f->type = type;
+    f->database = database;
   return ret;
+err:
+	assert(rc != SQLITE_OK);
+	return rc;
 }
 
 int s3vfsDelete(sqlite3_vfs* vfs, const char *zName, int syncDir) {
@@ -146,6 +470,100 @@ int s3vfsFileControl(sqlite3_file *pFile, int op, void *pArg){
   return SQLITE_NOTFOUND;
 }
 
+/**(from dqlite)**/
+int xVfsShmMap(struct vfsShm *s,
+		     unsigned region_index,
+		     unsigned region_size,
+		     bool extend,
+		     void volatile **out)
+{
+    printf("xVfsShmMap\n");
+	void *region;
+	int rv;
+    printf("xVfsShmMap #0:%s\n",s != NULL ? " s->regions != NULL ": "s->regions is NULL");
+    printf("xVfsShmMap #1:%s\n",s->regions != NULL ? " s->regions != NULL ": "s->regions is NULL");
+    s->regions != NULL;
+    printf("xVfsShmMap #2:%d\n",region_index);
+    region_index < s->n_regions;
+    printf("xVfsShmMap #4\n");
+
+	if (s->regions != NULL && region_index < s->n_regions) {
+    printf("xVfsShmMap s->regions != NULL && region_index < s->n_regions\n");
+		/* The region was already allocated. */
+		region = s->regions[region_index];
+		assert(region != NULL);
+	} else {
+    printf("xVfsShmMap s->regions != NULL && region_index < s->n_regions else\n");
+		if (extend) {
+    printf("xVfsShmMap extend\n");
+			void **regions;
+
+			/* We should grow the map one region at a time. */
+			assert(region_size == VFS__WAL_INDEX_REGION_SIZE);
+			assert(region_index == s->n_regions);
+			region = sqlite3_malloc64(region_size);
+			if (region == NULL) {
+				rv = SQLITE_NOMEM;
+				goto err;
+			}
+
+			memset(region, 0, region_size);
+
+			regions = sqlite3_realloc64(
+			    s->regions,
+			    sizeof *s->regions * (s->n_regions + 1));
+
+			if (regions == NULL) {
+				rv = SQLITE_NOMEM;
+				goto err_after_region_malloc;
+			}
+
+			s->regions = regions;
+			s->regions[region_index] = region;
+			s->n_regions++;
+
+		} else {
+    printf("xVfsShmMap no extend\n");
+			/* The region was not allocated and we don't have to
+			 * extend the map. */
+			region = NULL;
+		}
+	}
+
+	*out = region;
+
+	if (region_index == 0 && region != NULL) {
+		s->refcount++;
+	}
+    printf("SQLITE_OK\n");
+	return SQLITE_OK;
+
+err_after_region_malloc:
+    printf("xVfsShmMap err_after_region_malloc\n");
+	sqlite3_free(region);
+err:
+    printf("xVfsShmMap err\n");
+	assert(rv != SQLITE_OK);
+	*out = NULL;
+	return rv;
+}
+
+/* Simulate shared memory by allocating on the C heap.(from dqlite) */
+int xVfsFileShmMap(sqlite3_file *file, /* Handle open on database file */
+			 int region_index,   /* Region to retrieve */
+			 int region_size,    /* Size of regions */
+			 int extend, /* True to extend file if necessary */
+			 void volatile **out /* OUT: Mapped memory */
+)
+{
+    printf("xVfsFileShmMap\n");
+	struct s3vfsFile *f = (struct s3vfsFile *)file;
+
+	assert(f->type == VFS__DATABASE);
+
+	return xVfsShmMap(&f->database->shm, (unsigned)region_index,
+			 (unsigned)region_size, extend != 0, out);
+}
 
 
 const sqlite3_io_methods s3vfs_io_methods = {
@@ -163,10 +581,10 @@ const sqlite3_io_methods s3vfs_io_methods = {
   s3vfsSectorSize,                 /* xSectorSize */
   s3vfsDeviceCharacteristics,      /* xDeviceCharacteristics */
 
-  s3ShmMap,                      /* xShmMap */
-  s3ShmLock,                     /* xShmLock */
-  s3ShmBarrier,                  /* xShmBarrier */
-  s3ShmUnmap,                    /* xShmUnmap */
+  xVfsFileShmMap,                      /* xShmMap */
+//  s3ShmLock,                     /* xShmLock */
+//  s3ShmBarrier,                  /* xShmBarrier */
+//  s3ShmUnmap,                    /* xShmUnmap */
 //  winFetch,                       /* xFetch */
 //  winUnfetch                      /* xUnfetch */
 };
