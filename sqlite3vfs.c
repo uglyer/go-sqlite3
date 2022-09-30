@@ -9,38 +9,6 @@
 SQLITE_EXTENSION_INIT1
 #endif
 
-
-/* Maximum pathname length supported by this VFS. */
-#define VFS__MAX_PATHNAME 512
-
-/* WAL magic value. Either this value, or the same value with the least
- * significant bit also set (FORMAT__WAL_MAGIC | 0x00000001) is stored in 32-bit
- * big-endian format in the first 4 bytes of a WAL file.
- *
- * If the LSB is set, then the checksums for each frame within the WAL file are
- * calculated by treating all data as an array of 32-bit big-endian
- * words. Otherwise, they are calculated by interpreting all data as 32-bit
- * little-endian words. */
-#define VFS__WAL_MAGIC 0x377f0682
-
-/* WAL format version (same for WAL index). */
-#define VFS__WAL_VERSION 3007000
-
-/* Index of the write lock in the WAL-index header locks area. */
-#define VFS__WAL_WRITE_LOCK 0
-
-/* Write ahead log header size. */
-#define VFS__WAL_HEADER_SIZE 32
-
-/* Write ahead log frame header size. */
-#define VFS__FRAME_HEADER_SIZE 24
-
-/* Size of the first part of the WAL index header. */
-#define VFS__WAL_INDEX_HEADER_SIZE 48
-
-/* Size of a single memory-mapped WAL index region. */
-#define VFS__WAL_INDEX_REGION_SIZE 32768
-
 /* Create a new vfs object. */
 static struct vfs *vfsCreate(void)
 {
@@ -565,6 +533,130 @@ int xVfsFileShmMap(sqlite3_file *file, /* Handle open on database file */
 			 (unsigned)region_size, extend != 0, out);
 }
 
+static int vfsShmLock(struct vfsShm *s, int ofst, int n, int flags)
+{
+	int i;
+
+	if (flags & SQLITE_SHM_EXCLUSIVE) {
+		/* No shared or exclusive lock must be held in the region. */
+		for (i = ofst; i < ofst + n; i++) {
+			if (s->shared[i] > 0 || s->exclusive[i] > 0) {
+//			        tracef("EXCLUSIVE lock contention ofst:%d n:%d exclusive[%d]=%d shared[%d]=%d",
+//			                ofst, n, i, s->exclusive[i], i, s->shared[i]);
+				return SQLITE_BUSY;
+			}
+		}
+
+		for (i = ofst; i < ofst + n; i++) {
+			assert(s->exclusive[i] == 0);
+			s->exclusive[i] = 1;
+		}
+	} else {
+		/* No exclusive lock must be held in the region. */
+		for (i = ofst; i < ofst + n; i++) {
+			if (s->exclusive[i] > 0) {
+//			        tracef("SHARED lock contention ofst:%d n:%d exclusive[%d]=%d shared[%d]=%d",
+//			                ofst, n, i, s->exclusive[i], i, s->shared[i]);
+				return SQLITE_BUSY;
+			}
+		}
+
+		for (i = ofst; i < ofst + n; i++) {
+			s->shared[i]++;
+		}
+	}
+
+	return SQLITE_OK;
+}
+
+static int vfsShmUnlock(struct vfsShm *s, int ofst, int n, int flags)
+{
+	unsigned *these_locks;
+	unsigned *other_locks;
+	int i;
+
+	if (flags & SQLITE_SHM_SHARED) {
+		these_locks = s->shared;
+		other_locks = s->exclusive;
+	} else {
+		these_locks = s->exclusive;
+		other_locks = s->shared;
+	}
+
+	for (i = ofst; i < ofst + n; i++) {
+		/* Coherence check that no lock of the other type is held in this
+		 * region. */
+		assert(other_locks[i] == 0);
+
+		/* Only decrease the lock count if it's positive. In other words
+		 * releasing a never acquired lock is legal and idemponent. */
+		if (these_locks[i] > 0) {
+			these_locks[i]--;
+		}
+	}
+
+	return SQLITE_OK;
+}
+
+static int vfsFileShmLock(sqlite3_file *file, int ofst, int n, int flags)
+{
+  printf("vfsFileShmLock flag:%d\n",flags);
+	struct s3vfsFile *f;
+	struct vfsShm *shm;
+//	struct vfsWal *wal;
+	int rv;
+
+	assert(file != NULL);
+	assert(ofst >= 0);
+	assert(n >= 0);
+
+	/* Legal values for the offset and the range */
+	assert(ofst >= 0 && ofst + n <= SQLITE_SHM_NLOCK);
+	assert(n >= 1);
+	assert(n == 1 || (flags & SQLITE_SHM_EXCLUSIVE) != 0);
+
+	/* Legal values for the flags.
+	 *
+	 * See https://sqlite.org/c3ref/c_shm_exclusive.html. */
+	assert(flags == (SQLITE_SHM_LOCK | SQLITE_SHM_SHARED) ||
+	       flags == (SQLITE_SHM_LOCK | SQLITE_SHM_EXCLUSIVE) ||
+	       flags == (SQLITE_SHM_UNLOCK | SQLITE_SHM_SHARED) ||
+	       flags == (SQLITE_SHM_UNLOCK | SQLITE_SHM_EXCLUSIVE));
+
+	/* This is a no-op since shared-memory locking is relevant only for
+	 * inter-process concurrency. See also the unix-excl branch from
+	 * upstream (git commit cda6b3249167a54a0cf892f949d52760ee557129). */
+
+	f = (struct s3vfsFile *)file;
+
+	assert(f->type == VFS__DATABASE);
+	assert(f->database != NULL);
+
+	shm = &f->database->shm;
+	if (flags & SQLITE_SHM_UNLOCK) {
+		rv = vfsShmUnlock(shm, ofst, n, flags);
+	} else {
+		rv = vfsShmLock(shm, ofst, n, flags);
+	}
+  printf("vfsFileShmLock:%d\n",rv);
+//	wal = &f->database->wal;
+//	if (rv == SQLITE_OK && ofst == VFS__WAL_WRITE_LOCK) {
+//		assert(n == 1);
+//		/* When acquiring the write lock, make sure there's no
+//		 * transaction that hasn't been rolled back or polled. */
+//		if (flags == (SQLITE_SHM_LOCK | SQLITE_SHM_EXCLUSIVE)) {
+//			assert(wal->n_tx == 0);
+//		}
+//		/* When releasing the write lock, if we find a pending
+//		 * uncommitted transaction then a rollback must have occurred.
+//		 * In that case we delete the pending transaction. */
+//		if (flags == (SQLITE_SHM_UNLOCK | SQLITE_SHM_EXCLUSIVE)) {
+//			vfsWalRollbackIfUncommitted(wal);
+//		}
+//	}
+
+	return rv;
+}
 
 const sqlite3_io_methods s3vfs_io_methods = {
   2,                               /* iVersion */
@@ -582,7 +674,7 @@ const sqlite3_io_methods s3vfs_io_methods = {
   s3vfsDeviceCharacteristics,      /* xDeviceCharacteristics */
 
   xVfsFileShmMap,                      /* xShmMap */
-//  s3ShmLock,                     /* xShmLock */
+  vfsFileShmLock,                     /* xShmLock */
 //  s3ShmBarrier,                  /* xShmBarrier */
 //  s3ShmUnmap,                    /* xShmUnmap */
 //  winFetch,                       /* xFetch */
