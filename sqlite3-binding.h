@@ -12943,27 +12943,27 @@ int sqlite3_user_delete(
 //  int isWrite,                    /* True to extend file if necessary */
 //  void volatile **pp              /* OUT: Mapped memory */
 //);
-
-int s3ShmMap(
-  sqlite3_file *fd,               /* Handle open on database file */
-  int iRegion,                    /* Region to retrieve */
-  int szRegion,                   /* Size of regions */
-  int isWrite,                    /* True to extend file if necessary */
-  void volatile **pp              /* OUT: Mapped memory */
-);
-
-int s3ShmLock(
-  sqlite3_file *fd,          /* Database file holding the shared memory */
-  int ofst,                  /* First lock to acquire or release */
-  int n,                     /* Number of locks to acquire or release */
-  int flags                  /* What to do with the lock */
-);
-
-void s3ShmBarrier(
-  sqlite3_file *fd          /* Database holding the shared memory */
-);
-
-int s3ShmUnmap(
-  sqlite3_file *fd,          /* Database holding shared memory */
-  int deleteFlag             /* Delete after closing if true */
-);
+//
+//int s3ShmMap(
+//  sqlite3_file *fd,               /* Handle open on database file */
+//  int iRegion,                    /* Region to retrieve */
+//  int szRegion,                   /* Size of regions */
+//  int isWrite,                    /* True to extend file if necessary */
+//  void volatile **pp              /* OUT: Mapped memory */
+//);
+//
+//int s3ShmLock(
+//  sqlite3_file *fd,          /* Database file holding the shared memory */
+//  int ofst,                  /* First lock to acquire or release */
+//  int n,                     /* Number of locks to acquire or release */
+//  int flags                  /* What to do with the lock */
+//);
+//
+//void s3ShmBarrier(
+//  sqlite3_file *fd          /* Database holding the shared memory */
+//);
+//
+//int s3ShmUnmap(
+//  sqlite3_file *fd,          /* Database holding shared memory */
+//  int deleteFlag             /* Delete after closing if true */
+//);
