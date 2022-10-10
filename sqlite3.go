@@ -2316,3 +2316,7 @@ func (rc *SQLiteRows) nextSyncLocked(dest []driver.Value) error {
 	}
 	return nil
 }
+
+func Sqlite3Randomness(n int, b []byte, offset int) {
+	C.sqlite3_randomness(C.int(n), unsafe.Pointer(&b[offset]))
+}
