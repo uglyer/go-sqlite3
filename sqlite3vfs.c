@@ -218,6 +218,14 @@ extern int goVFSUnlock(sqlite3_file*, int eLock);
 extern int goVFSCheckReservedLock(sqlite3_file* file, int *pResOut);
 extern int goVFSSectorSize(sqlite3_file* file);
 extern int goVFSDeviceCharacteristics(sqlite3_file* file);
+extern int goVFSShmMap(sqlite3_file *file, /* Handle open on database file */
+       			 int region_index,   /* Region to retrieve */
+       			 int region_size,    /* Size of regions */
+       			 int extend, /* True to extend file if necessary */
+       			 int **out /* OUT: Mapped memory */
+       );
+extern int goVFSShmLock(sqlite3_file *file, int ofst, int n, int flags);
+extern int goVFSShmUnmap(sqlite3_file *file, int delete_flag);
 
 
 int s3vfsNew(char* name, int maxPathName) {
@@ -432,6 +440,25 @@ int s3vfsSectorSize(sqlite3_file* file) {
 
 int s3vfsDeviceCharacteristics(sqlite3_file* file) {
   return goVFSDeviceCharacteristics(file);
+}
+
+int s3vfsShmMap(sqlite3_file *file, /* Handle open on database file */
+			 int region_index,   /* Region to retrieve */
+			 int region_size,    /* Size of regions */
+			 int extend, /* True to extend file if necessary */
+			 void volatile **out /* OUT: Mapped memory */
+) {
+  return goVFSShmMap(file,region_index,extend,out);
+}
+
+int s3vfsShmLock(sqlite3_file *file, int ofst, int n, int flags)
+{
+  return goVFSShmLock(file,ofst,n,flags);
+}
+
+int s3vfsShmUnmap(sqlite3_file *file, int delete_flag)
+{
+  return goVFSShmUnmap(file, delete_flag);
 }
 
 int s3vfsFileControl(sqlite3_file *pFile, int op, void *pArg){
@@ -683,6 +710,57 @@ static int vfsFileShmUnmap(sqlite3_file *file, int delete_flag)
 	return SQLITE_OK;
 }
 
+
+/* Invalidate the WAL index header, forcing the next connection that tries to
+ * start a read transaction to rebuild the WAL index by reading the WAL.
+ *
+ * No read or write lock must be currently held. */
+static void vfsInvalidateWalIndexHeader(struct vfsDatabase *d)
+{
+	struct vfsShm *shm = &d->shm;
+	uint8_t *header = shm->regions[0];
+	unsigned i;
+
+	for (i = 0; i < SQLITE_SHM_NLOCK; i++) {
+		assert(shm->shared[i] == 0);
+		assert(shm->exclusive[i] == 0);
+	}
+
+	/* The walIndexTryHdr function in sqlite/wal.c (which is indirectly
+	 * called by sqlite3WalBeginReadTransaction), compares the first and
+	 * second copy of the WAL index header to see if it is valid. Changing
+	 * the first byte of each of the two copies is enough to make the check
+	 * fail. */
+	header[0] = 1;
+	header[VFS__WAL_INDEX_HEADER_SIZE] = 0;
+}
+
+/* Simulate shared memory by allocating on the C heap.(from dqlite) */
+void vfsInvalidateWalIndexHeaderByFile(sqlite3_file *file /* Handle open on database file */)
+{
+//    printf("xVfsFileShmMap\n");
+	struct s3vfsFile *f = (struct s3vfsFile *)file;
+
+	assert(f->type == VFS__DATABASE);
+
+	return vfsInvalidateWalIndexHeader(&f->database);
+}
+
+/* Simulate shared memory by allocating on the C heap.(from dqlite) */
+void vfsInvalidateWalIndexHeaderByFileName(sqlite3_vfs *vfs, const char *filename)
+{
+//    printf("xVfsFileShmMap\n");
+    struct vfs *v;
+	struct vfsDatabase *database;
+
+    v = (struct vfs *)(vfs->pAppData);
+	database = vfsDatabaseLookup(v, filename);
+
+    assert(database != NULL);
+
+	return vfsInvalidateWalIndexHeader(&database);
+}
+
 const sqlite3_io_methods s3vfs_io_methods = {
   2,                               /* iVersion */
   s3vfsClose,                      /* xClose */
@@ -702,6 +780,10 @@ const sqlite3_io_methods s3vfs_io_methods = {
   vfsFileShmLock,                     /* xShmLock */
   vfsFileShmBarrier,                  /* xShmBarrier */
   vfsFileShmUnmap,                    /* xShmUnmap */
+//  s3vfsShmMap,                      /* xShmMap */
+//  s3vfsShmLock,                     /* xShmLock */
+//  vfsFileShmBarrier,                  /* xShmBarrier */
+//  s3vfsShmUnmap,                    /* xShmUnmap */
   0,                       /* xFetch */
   0                      /* xUnfetch */
 };

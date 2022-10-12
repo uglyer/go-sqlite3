@@ -424,6 +424,73 @@ func goVFSDeviceCharacteristics(cfile *C.sqlite3_file) C.int {
 	return C.int(file.DeviceCharacteristics())
 }
 
+//export goVFSShmMap
+func goVFSShmMap(
+	cfile *C.sqlite3_file, /* Handle open on database file */
+	region_index C.int, /* Region to retrieve */
+	region_size C.int, /* Size of regions */
+	extend C.int, /* True to extend file if necessary */
+	out **C.int, /* OUT: Mapped memory */
+) C.int {
+	s3vfsFile := (*C.s3vfsFile)(unsafe.Pointer(cfile))
+
+	fileID := uint64(s3vfsFile.id)
+
+	fileMux.Lock()
+	file := fileMap[fileID]
+	fileMux.Unlock()
+
+	if file == nil {
+		return 0
+	}
+	b, err := file.ShmMap(int(region_index), int(region_size), int(extend))
+	if err != nil {
+		return errToC(err)
+	}
+	*out = &b
+	return sqliteOK
+}
+
+//export goVFSShmLock
+func goVFSShmLock(cfile *C.sqlite3_file, ofst C.int, n C.int, flags C.int) C.int {
+	s3vfsFile := (*C.s3vfsFile)(unsafe.Pointer(cfile))
+
+	fileID := uint64(s3vfsFile.id)
+
+	fileMux.Lock()
+	file := fileMap[fileID]
+	fileMux.Unlock()
+
+	if file == nil {
+		return 0
+	}
+	err := file.ShmLock(int(ofst), int(n), int(flags))
+	if err != nil {
+		return errToC(err)
+	}
+	return sqliteOK
+}
+
+//export goVFSShmUnmap
+func goVFSShmUnmap(cfile *C.sqlite3_file, delete_flag C.int) C.int {
+	s3vfsFile := (*C.s3vfsFile)(unsafe.Pointer(cfile))
+
+	fileID := uint64(s3vfsFile.id)
+
+	fileMux.Lock()
+	file := fileMap[fileID]
+	fileMux.Unlock()
+
+	if file == nil {
+		return 0
+	}
+	err := file.ShmUnmap(int(delete_flag))
+	if err != nil {
+		return errToC(err)
+	}
+	return sqliteOK
+}
+
 func vfsFromC(cvfs *C.sqlite3_vfs) ExtendedVFSv1 {
 	vfsName := C.GoString(cvfs.zName)
 	return vfsMap[vfsName]

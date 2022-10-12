@@ -7,6 +7,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"sync/atomic"
 )
 
@@ -106,6 +107,18 @@ func (vfs *TmpVFS) FullPathname(name string) string {
 type TmpFile struct {
 	lockCount int64
 	f         *os.File
+	shm       vfsShm
+}
+
+const SQLITE_SHM_NLOCK = 8
+
+type vfsShm struct {
+	mtx       sync.Mutex
+	regions   map[uint32][]byte        /* Pointers to shared memory regions. */
+	n_regions uint32                   /* Number of shared memory regions. */
+	refcount  uint32                   /* Number of outstanding mappings. */
+	shared    [SQLITE_SHM_NLOCK]uint32 /* Count of shared locks */
+	exclusive [SQLITE_SHM_NLOCK]uint32 /* Count of exclusive locks */
 }
 
 func (tf *TmpFile) Close() error {
@@ -166,4 +179,16 @@ func (tf *TmpFile) SectorSize() int64 {
 
 func (tf *TmpFile) DeviceCharacteristics() DeviceCharacteristic {
 	return 0
+}
+
+func (tf *TmpFile) ShmMap(regionIndex int, regionSize int, extend int) ([]byte, error) {
+	return nil, errors.New("todo impl shamap")
+}
+
+func (tf *TmpFile) ShmLock(offset int, n int, flags int) error {
+	return errors.New("todo impl ShmLock")
+}
+
+func (tf *TmpFile) ShmUnmap(deleteFlag int) error {
+	return errors.New("todo impl ShmUnmap")
 }

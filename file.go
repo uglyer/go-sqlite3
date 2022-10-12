@@ -1,5 +1,6 @@
 package sqlite3
 
+import "C"
 import "fmt"
 
 type File interface {
@@ -61,6 +62,10 @@ type File interface {
 	// DeviceCharacteristics returns a bit vector describing behaviors
 	// of the underlying device.
 	DeviceCharacteristics() DeviceCharacteristic
+
+	ShmMap(regionIndex int, regionSize int, extend int) ([]byte, error)
+	ShmLock(offset int, n int, flags int) error
+	ShmUnmap(deleteFlag int) error
 }
 
 type SyncType int
