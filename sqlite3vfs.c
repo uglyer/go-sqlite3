@@ -719,6 +719,9 @@ void vfsInvalidateWalIndexHeaderByFile(sqlite3_file *file /* Handle open on data
 //	assert(f->type == VFS__DATABASE);
 
     struct vfsShm *shm = &f->database->shm;
+    if (shm->n_regions == 0) {
+        return;
+    }
 	uint8_t *header = shm->regions[0];
 	unsigned i;
 
