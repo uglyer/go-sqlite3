@@ -1,6 +1,9 @@
 package sqlite3
 
-import "time"
+import (
+	"time"
+	"unsafe"
+)
 
 // https://github.com/psanford/sqlite3vfs
 // Register a VFS with sqlite. The name specified must be unique and
@@ -32,7 +35,7 @@ func RegisterVFS(name string, vfs VFS, opts ...Option) error {
 type VFS interface {
 	// Open a file.
 	// Name will either be the name of the file to open or "" for a temp file.
-	Open(name string, flags OpenFlag) (File, OpenFlag, error)
+	Open(name string, flags OpenFlag, cfile unsafe.Pointer) (File, OpenFlag, error)
 
 	// Delete the named file. If dirSync is true them ensure the file-system
 	// modification has been synced to disk before returning.

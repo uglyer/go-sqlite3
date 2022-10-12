@@ -3,6 +3,7 @@ package sqlite3
 import (
 	"database/sql"
 	"fmt"
+	"io/ioutil"
 	"testing"
 
 	"github.com/google/go-cmp/cmp"
@@ -26,7 +27,7 @@ func TestSqlite3vfs(t *testing.T) {
 	//if err != nil {
 	//	t.Fatalf("set locking_mode = EXCLUSIVE error:%v", err)
 	//}
-	_, err = db.Exec("PRAGMA synchronous = OFF")
+	_, err = db.Exec("PRAGMA synchronous = ON")
 	if err != nil {
 		t.Fatalf("set synchronous = OFF error:%v", err)
 	}
@@ -56,7 +57,10 @@ title text
 			Title: "biophysicist-straddled",
 		},
 	}
-
+	cacheEmptyRowByte, err := ioutil.ReadAll(vfs.walFile.f)
+	if err != nil {
+		t.Fatal(err)
+	}
 	for _, row := range rows {
 		_, err = db.Exec(`INSERT INTO foo (id, title) values (?, ?)`, row.ID, row.Title)
 		if err != nil {
@@ -86,6 +90,31 @@ title text
 
 	if !cmp.Equal(rows, gotRows) {
 		t.Fatal(cmp.Diff(rows, gotRows))
+	}
+	var row [1]int
+	if err := db.QueryRow(`SELECT count(*) from foo`).Scan(&row[0]); err != nil {
+		t.Fatal(err)
+	} else if row[0] != len(rows) {
+		t.Fatalf("count result error:%v", row[0])
+	}
+	// 恢复缓存状态
+	err = ioutil.WriteFile(vfs.walFile.f.Name(), cacheEmptyRowByte, 0600)
+	if err != nil {
+		t.Fatal(err)
+	}
+	vfs.dbFile.invalidateWalIndexHeader()
+	if err := db.QueryRow(`SELECT count(*) from foo`).Scan(&row[0]); err != nil {
+		t.Fatal(err)
+	} else if row[0] != 0 {
+		t.Fatalf("count result error:%v", row[0])
+	}
+
+	// 重新插入记录
+	for _, row := range rows {
+		_, err = db.Exec(`INSERT INTO foo (id, title) values (?, ?)`, row.ID, row.Title)
+		if err != nil {
+			t.Fatal(err)
+		}
 	}
 
 	err = db.Close()

@@ -40,7 +40,7 @@ func goVFSOpen(cvfs *C.sqlite3_vfs, name *C.char, retFile *C.sqlite3_file, flags
 
 	vfs := vfsFromC(cvfs)
 
-	file, retFlags, err := vfs.Open(fileName, OpenFlag(flags))
+	file, retFlags, err := vfs.Open(fileName, OpenFlag(flags), unsafe.Pointer(retFile))
 	if err != nil {
 		return errToC(err)
 	}
@@ -434,4 +434,8 @@ func errToC(err error) C.int {
 		return C.int(e.code)
 	}
 	return C.int(GenericError.code)
+}
+
+func GoVfsInvalidateWalIndexHeaderByFile(cfile unsafe.Pointer) {
+	C.vfsInvalidateWalIndexHeaderByFile((*C.sqlite3_file)(cfile))
 }

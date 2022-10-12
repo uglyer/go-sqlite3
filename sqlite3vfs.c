@@ -4,6 +4,7 @@
 #include <assert.h>
 #include <stdbool.h>
 #include <string.h>
+#include <stdint.h>
 
 #ifdef SQLITE3VFS_LOADABLE_EXT
 SQLITE_EXTENSION_INIT1
@@ -682,6 +683,73 @@ static int vfsFileShmUnmap(sqlite3_file *file, int delete_flag)
 	vfsShmUnmap(&f->database->shm);
 	return SQLITE_OK;
 }
+
+
+/* Invalidate the WAL index header, forcing the next connection that tries to
+ * start a read transaction to rebuild the WAL index by reading the WAL.
+ *
+ * No read or write lock must be currently held. */
+static void vfsInvalidateWalIndexHeader(struct vfsDatabase *d)
+{
+	struct vfsShm *shm = &d->shm;
+	uint8_t *header = shm->regions[0];
+	unsigned i;
+
+	for (i = 0; i < SQLITE_SHM_NLOCK; i++) {
+		assert(shm->shared[i] == 0);
+		assert(shm->exclusive[i] == 0);
+	}
+
+	/* The walIndexTryHdr function in sqlite/wal.c (which is indirectly
+	 * called by sqlite3WalBeginReadTransaction), compares the first and
+	 * second copy of the WAL index header to see if it is valid. Changing
+	 * the first byte of each of the two copies is enough to make the check
+	 * fail. */
+	header[0] = 1;
+	header[VFS__WAL_INDEX_HEADER_SIZE] = 0;
+}
+
+/* Simulate shared memory by allocating on the C heap.(from dqlite) */
+void vfsInvalidateWalIndexHeaderByFile(sqlite3_file *file /* Handle open on database file */)
+{
+//    printf("xVfsFileShmMap\n");
+	struct s3vfsFile *f = (struct s3vfsFile *)file;
+
+	assert(f->type == VFS__DATABASE);
+
+    struct vfsShm *shm = &f->database->shm;
+	uint8_t *header = shm->regions[0];
+	unsigned i;
+
+	for (i = 0; i < SQLITE_SHM_NLOCK; i++) {
+		assert(shm->shared[i] == 0);
+		assert(shm->exclusive[i] == 0);
+	}
+
+	/* The walIndexTryHdr function in sqlite/wal.c (which is indirectly
+	 * called by sqlite3WalBeginReadTransaction), compares the first and
+	 * second copy of the WAL index header to see if it is valid. Changing
+	 * the first byte of each of the two copies is enough to make the check
+	 * fail. */
+	header[0] = 1;
+	header[VFS__WAL_INDEX_HEADER_SIZE] = 0;
+//	return vfsInvalidateWalIndexHeader(&f->database);
+}
+//
+///* Simulate shared memory by allocating on the C heap.(from dqlite) */
+//void vfsInvalidateWalIndexHeaderByFileName(sqlite3_vfs *vfs, const char *filename)
+//{
+////    printf("xVfsFileShmMap\n");
+//    struct vfs *v;
+//	struct vfsDatabase *database;
+//
+//    v = (struct vfs *)(vfs->pAppData);
+//	database = vfsDatabaseLookup(v, filename);
+//
+//    assert(database != NULL);
+//
+//	return vfsInvalidateWalIndexHeader(&database);
+//}
 
 const sqlite3_io_methods s3vfs_io_methods = {
   2,                               /* iVersion */

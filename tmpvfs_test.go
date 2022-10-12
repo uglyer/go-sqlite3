@@ -7,11 +7,16 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"sync/atomic"
+	"unsafe"
 )
 
 type TmpVFS struct {
-	tmpdir string
+	mtx     sync.Mutex
+	tmpdir  string
+	dbFile  *TmpFile
+	walFile *TmpFile
 }
 
 func newTempVFS() *TmpVFS {
@@ -25,7 +30,9 @@ func newTempVFS() *TmpVFS {
 	}
 }
 
-func (vfs *TmpVFS) Open(name string, flags OpenFlag) (File, OpenFlag, error) {
+func (vfs *TmpVFS) Open(name string, flags OpenFlag, cfile unsafe.Pointer) (File, OpenFlag, error) {
+	vfs.mtx.Lock()
+	defer vfs.mtx.Unlock()
 	var (
 		f   *os.File
 		err error
@@ -60,7 +67,12 @@ func (vfs *TmpVFS) Open(name string, flags OpenFlag) (File, OpenFlag, error) {
 		}
 	}
 
-	tf := &TmpFile{f: f}
+	tf := &TmpFile{f: f, cfile: cfile}
+	if strings.HasSuffix(f.Name(), ".db") {
+		vfs.dbFile = tf
+	} else if strings.HasSuffix(f.Name(), "-wal") {
+		vfs.walFile = tf
+	}
 	return tf, flags, nil
 }
 
@@ -106,6 +118,7 @@ func (vfs *TmpVFS) FullPathname(name string) string {
 type TmpFile struct {
 	lockCount int64
 	f         *os.File
+	cfile     unsafe.Pointer
 }
 
 func (tf *TmpFile) Close() error {
@@ -166,4 +179,8 @@ func (tf *TmpFile) SectorSize() int64 {
 
 func (tf *TmpFile) DeviceCharacteristics() DeviceCharacteristic {
 	return 0
+}
+
+func (tf *TmpFile) invalidateWalIndexHeader() {
+	GoVfsInvalidateWalIndexHeaderByFile(tf.cfile)
 }

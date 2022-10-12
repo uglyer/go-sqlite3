@@ -120,6 +120,7 @@ void s3vfsShmBarrier(sqlite3_file*);
 int s3vfsShmUnmap(sqlite3_file*, int deleteFlag);
 int s3vfsFetch(sqlite3_file*, sqlite3_int64 iOfst, int iAmt, void **pp);
 int s3vfsUnfetch(sqlite3_file*, sqlite3_int64 iOfst, void *p);
+void vfsInvalidateWalIndexHeaderByFile(sqlite3_file*);
 
 
 int s3vfsOpen(sqlite3_vfs*, const char *, sqlite3_file*, int , int *);
