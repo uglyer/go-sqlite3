@@ -102,7 +102,7 @@ title text
 	if err != nil {
 		t.Fatal(err)
 	}
-	vfs.dbFile.invalidateWalIndexHeader()
+	vfs.walFile.invalidateWalIndexHeader()
 	if err := db.QueryRow(`SELECT count(*) from foo`).Scan(&row[0]); err != nil {
 		t.Fatal(err)
 	} else if row[0] != 0 {

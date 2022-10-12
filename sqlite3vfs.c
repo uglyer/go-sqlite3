@@ -715,7 +715,8 @@ void vfsInvalidateWalIndexHeaderByFile(sqlite3_file *file /* Handle open on data
 //    printf("xVfsFileShmMap\n");
 	struct s3vfsFile *f = (struct s3vfsFile *)file;
 
-	assert(f->type == VFS__DATABASE);
+// 取消校验, 因为仅使用 database (wal与主库文件对象共享)
+//	assert(f->type == VFS__DATABASE);
 
     struct vfsShm *shm = &f->database->shm;
 	uint8_t *header = shm->regions[0];
